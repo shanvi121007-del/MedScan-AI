@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import * as ort from 'onnxruntime-web';
+import { env } from 'onnxruntime-web';
 import {
   Loader2,
   AlertCircle,
