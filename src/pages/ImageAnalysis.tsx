@@ -253,4 +253,147 @@ export default function ImageAnalysis({
         status: 'analyzing',
         note:
           `Research-demo output: ${result.label}; display score ` +
+          `${(result.score * 100).toFixed(1)}%. Not a clinical diagnosis.`,
+      });
+
+      setPrediction(result);
+      setDone(true);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Analysis failed. Please try again.';
+
+      console.error('[MedScan] Analysis failed:', err);
+      setError(message);
+
+      try {
+        await addRecord({
+          modality,
+          fileName: file.file.name,
+          fileType: file.file.type,
+          fileSize: file.file.size,
+          status: 'failed',
+          note: `Analysis failed: ${message}`,
+        });
+      } catch (historyError) {
+        console.error(
+          '[MedScan] Could not save failure record:',
+          historyError,
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="card p-6">
+        <div className="mb-5">
+          <h2 className="text-lg font-bold text-ink-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+        </div>
+
+        <FileUploader
+          accept={acceptLabel}
+          maxSizeMb={MAX_SIZE_MB}
+          file={file}
+          onSelect={handleSelect}
+          onClear={handleClear}
+          label="Click to select an image"
+          hint={`PNG, JPEG, WebP, BMP, GIF · max ${MAX_SIZE_MB} MB`}
+          imageOnly
+        />
+
+        {error && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-danger-500/30 bg-danger-500/10 px-4 py-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger-600" />
+            <p className="text-sm text-danger-600">{error}</p>
+          </div>
+        )}
+
+        {modality === 'mri' ? (
+          <p className="mt-4 text-sm text-slate-500">
+            Research demonstration only. Results are not a medical diagnosis.
+          </p>
+        ) : (
+          <div className="mt-5">
+            <ModelNotConnected />
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleAnalyze}
+            disabled={!file || busy}
+            className="btn-primary"
+          >
+            {busy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Processing…
+              </>
+            ) : (
+              <>
+                <ScanLine className="h-4 w-4" />
+                Analyze
+              </>
+            )}
+          </button>
+
+          {file && (
+            <button
+              onClick={handleClear}
+              disabled={busy}
+              className="btn-ghost"
+            >
+              Remove file
+            </button>
+          )}
+        </div>
+
+        {prediction && (
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <h3 className="font-semibold text-slate-800">
+              Preliminary model output
+            </h3>
+            <p className="mt-1 text-sm text-slate-700">
+              Class: <strong>{prediction.label}</strong>
+            </p>
+            <p className="text-sm text-slate-700">
+              Display score: {(prediction.score * 100).toFixed(1)}%
+            </p>
+            <p className="mt-2 text-xs text-slate-500">
+              This score is not clinically validated. Consult a qualified
+              clinician for medical interpretation.
+            </p>
+          </div>
+        )}
+
+        {done && (
+          <div className="mt-5 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+            <p className="text-sm text-slate-600">
+              Analysis attempt recorded in History.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <Disclaimer />
+    </div>
+  );
+}
+
+
+
+      await addRecord({
+        modality,
+        fileName: file.file.name,
+        fileType: file.file.type,
+        fileSize: file.file.size,
+        status: 'analyzing',
+        note:
+          `Research-demo output: ${result.label}; display score ` +
           `${(result.
