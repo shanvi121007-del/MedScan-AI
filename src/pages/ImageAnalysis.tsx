@@ -10,9 +10,7 @@ import type { Modality } from '@/lib/types';
 ort.env.wasm.wasmPaths =
   'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
 
-const MODEL_URL =
-  'https://github.com/shanvi121007-del/MedScan-AI/releases/download/v1.0.0/brain_tumor_model.onnx';
-
+const MODEL_URL = '/model/brain_tumor_model.onnx';
 const CLASSES = ['glioma', 'meningioma', 'no tumor', 'pituitary'] as const;
 const MAX_SIZE_MB = 20;
 
