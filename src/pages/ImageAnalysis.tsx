@@ -1,4 +1,3 @@
-```tsx
 import { useState } from 'react';
 import * as ort from 'onnxruntime-web';
 import {
@@ -16,8 +15,6 @@ import Disclaimer from '@/components/Disclaimer';
 import { addRecord } from '@/lib/history';
 import type { Modality } from '@/lib/types';
 
-// Configure ONNX Runtime to load WASM assets from the CDN.
-// This avoids relying on Bolt's local WASM asset paths.
 ort.env.wasm.wasmPaths =
   'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
 
@@ -69,39 +66,191 @@ function getModelSession(): Promise<ort.InferenceSession> {
   return sessionPromise;
 }
 
-/**
- * Preprocess an image into an RGB, channels-first tensor.
- *
- * Assumptions to verify against the model:
- * - Input dimensions: [1, 3, 128, 128]
- * - RGB channels
- * - Pixel normalization: [-1, 1]
- */
-async function preprocessImage(file: File): Promise<Float32Array> {
+async function predictMRI(file: File): Promise<Prediction> {
+  const session = await getModelSession();
+
+  if (!session.inputNames[0] || !session.outputNames[0]) {
+    throw new Error('The model input or output could not be identified.');
+  }
+
   const bitmap = await createImageBitmap(file);
+
+  let tensorData: Float32Array;
 
   try {
     const canvas = document.createElement('canvas');
     canvas.width = 128;
     canvas.height = 128;
 
-    const context = canvas.getContext('2d', {
-      willReadFrequently: true,
-    });
+    const context = canvas.getContext('2d');
 
     if (!context) {
-      throw new Error('Could not prepare the image for analysis.');
+      throw new Error('Could not prepare the MRI image.');
     }
 
     context.drawImage(bitmap, 0, 0, 128, 128);
 
-    const pixels = context.getImageData(
-      0,
-      0,
-      128,
-      128,
-    ).data;
-
+    const pixels = context.getImageData(0, 0, 128, 128).data;
     const planeSize = 128 * 128;
-    const tensorData = new Float32Array(3 * plane*
-```
+
+    tensorData = new Float32Array(3 * planeSize);
+
+    for (let i = 0; i < planeSize; i++) {
+      const pixel = i * 4;
+
+      tensorData[i] = pixels[pixel] / 127.5 - 1;
+      tensorData[planeSize + i] = pixels[pixel + 1] / 127.5 - 1;
+      tensorData[2 * planeSize + i] = pixels[pixel + 2] / 127.5 - 1;
+    }
+  } finally {
+    bitmap.close();
+  }
+
+  const inputName = session.inputNames[0];
+  const outputName = session.outputNames[0];
+
+  const tensor = new ort.Tensor(
+    'float32',
+    tensorData,
+    [1, 3, 128, 128],
+  );
+
+  const outputs = await session.run({
+    [inputName]: tensor,
+  });
+
+  const output = outputs[outputName];
+
+  if (!output || !('data' in output)) {
+    throw new Error('The model returned no readable output.');
+  }
+
+  const values = Array.from(output.data as ArrayLike<number>);
+
+  if (
+    values.length !== CLASS_NAMES.length ||
+    values.some((value) => !Number.isFinite(value))
+  ) {
+    throw new Error(
+      `Unexpected model output: received ${values.length} values; expected ${CLASS_NAMES.length}.`,
+    );
+  }
+
+  const sum = values.reduce((total, value) => total + value, 0);
+
+  const isProbabilityVector =
+    values.every((value) => value >= 0 && value <= 1) &&
+    Math.abs(sum - 1) < 0.01;
+
+  let scores: number[];
+
+  if (isProbabilityVector) {
+    scores = values;
+  } else {
+    const max = Math.max(...values);
+    const exponentials = values.map((value) => Math.exp(value - max));
+    const denominator = exponentials.reduce(
+      (total, value) => total + value,
+      0,
+    );
+
+    if (!Number.isFinite(denominator) || denominator === 0) {
+      throw new Error('The model returned invalid scores.');
+    }
+
+    scores = exponentials.map((value) => value / denominator);
+  }
+
+  const bestIndex = scores.indexOf(Math.max(...scores));
+
+  return {
+    label: CLASS_NAMES[bestIndex],
+    score: scores[bestIndex],
+  };
+}
+
+export default function ImageAnalysis({
+  modality,
+  title,
+  description,
+  acceptLabel,
+}: Props) {
+  const [file, setFile] = useState<UploadedFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [prediction, setPrediction] = useState<Prediction | null>(null);
+
+  async function handleSelect(selected: File) {
+    setError(null);
+    setDone(false);
+    setPrediction(null);
+
+    if (
+      !IMAGE_TYPES.includes(selected.type) &&
+      !selected.type.startsWith('image/')
+    ) {
+      setError('Unsupported format. Please upload a supported image.');
+      return;
+    }
+
+    if (selected.size > MAX_SIZE_MB * 1024 * 1024) {
+      setError(`File is too large. Maximum allowed size is ${MAX_SIZE_MB} MB.`);
+      return;
+    }
+
+    if (file?.previewUrl) {
+      URL.revokeObjectURL(file.previewUrl);
+    }
+
+    setFile({
+      file: selected,
+      previewUrl: URL.createObjectURL(selected),
+    });
+  }
+
+  function handleClear() {
+    if (file?.previewUrl) {
+      URL.revokeObjectURL(file.previewUrl);
+    }
+
+    setFile(null);
+    setError(null);
+    setDone(false);
+    setPrediction(null);
+  }
+
+  async function handleAnalyze() {
+    if (!file || busy) return;
+
+    setBusy(true);
+    setError(null);
+    setDone(false);
+    setPrediction(null);
+
+    try {
+      if (modality !== 'mri') {
+        await addRecord({
+          modality,
+          fileName: file.file.name,
+          fileType: file.file.type,
+          fileSize: file.file.size,
+          status: 'no_model',
+          note: 'No compatible histopathology model is connected.',
+        });
+
+        setDone(true);
+        return;
+      }
+
+      const result = await predictMRI(file.file);
+
+      await addRecord({
+        modality,
+        fileName: file.file.name,
+        fileType: file.file.type,
+        fileSize: file.file.size,
+        status: 'analyzing',
+        note:
+          `Research-demo output: ${result.label}; display score ` +
+          `${(result.
